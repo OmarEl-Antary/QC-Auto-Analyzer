@@ -18,24 +18,29 @@ JIRA_SERVER = os.getenv("JIRA_SERVER")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_TOKEN = os.getenv("JIRA_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-MY_CHAT_ID = os.getenv("MY_CHAT_ID")
+TEAMS_WEBHOOK = os.getenv("TEAMS_WEBHOOK")
 
 # --- [إعدادات الربط] ---
 client = Groq(api_key=GROQ_API_KEY)
 jira = JIRA(server=JIRA_SERVER, basic_auth=(JIRA_EMAIL, JIRA_TOKEN))
 
-def send_telegram(message):
+def send_teams(message):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        response = requests.post(url, json={
-            "chat_id": MY_CHAT_ID,
-            "text": message,
-            "parse_mode": "HTML"
-        })
-        print(f"Telegram: {response.json().get('ok')}")
+        payload = {
+            "@type": "MessageCard",
+            "@context": "http://schema.org/extensions",
+            "themeColor": "0076D7",
+            "summary": "QC Auto Analyzer",
+            "sections": [{
+                "activityTitle": "🤖 QC Auto Analyzer",
+                "activityText": message
+            }]
+        }
+        response = requests.post(TEAMS_WEBHOOK, json=payload)
+        print(f"Teams Status: {response.status_code}")
+        print(f"Teams Response: {response.text}")
     except Exception as e:
-        print(f"Telegram Error: {e}")
+        print(f"Teams Error: {e}")
 
 def already_analyzed(issue):
     comments = jira.comments(issue)
@@ -96,9 +101,7 @@ Story Title: {summary}
 Story Description: {description}
 
 Requirements:
-- Generate all test case test cases
-- 
-Don't repeat any test cases 
+- Generate AT LEAST 15 test cases
 - Cover: Happy Path, Negative Cases, Edge Cases, UI/UX, Performance, Security
 - Format MUST be a table with these exact columns: | # | Title | Steps | Expected Result | Type |
 - Type can be: Happy Path / Negative / Edge Case / UI / Security / Performance
@@ -133,14 +136,14 @@ Output ONLY the table, nothing else.
         print(f"Done: {story_key}")
 
         story_link = f"{JIRA_SERVER}browse/{story_key}"
-        send_telegram(f"✅ تم تحليل <a href='{story_link}'>{story_key}</a>\n📝 {summary}")
+        send_teams(f"✅ تم تحليل [{story_key}]({story_link})\n📝 {summary}")
 
         time.sleep(2)
         return "done"
 
     except Exception as e:
         print(f"FAILED {story_key}: {str(e)}")
-        send_telegram(f"❌ فشل تحليل {story_key}: {str(e)}")
+        send_teams(f"❌ فشل تحليل {story_key}: {str(e)}")
         return "failed"
 
 def run_regression(regression_story_key, project_name):
@@ -197,9 +200,11 @@ Output ONLY the table, nothing else.
 
         jira.add_comment(regression_story_key, comment_body)
         print(f"Regression Done: {regression_story_key}")
+        send_teams(f"✅ تم توليد Regression Test Cases في {regression_story_key}")
 
     except Exception as e:
         print(f"FAILED Regression: {str(e)}")
+        send_teams(f"❌ فشل توليد Regression: {str(e)}")
 
 def run_jql(jql_query, project_name, regression_story=None):
     print(f"Running JQL: {jql_query}")
@@ -209,7 +214,7 @@ def run_jql(jql_query, project_name, regression_story=None):
     print(f"Found {total} Stories")
 
     if total == 0:
-        send_telegram(f"⚠️ مفيش Stories اتلاقت في {project_name}!")
+        send_teams(f"⚠️ مفيش Stories اتلاقت في {project_name}!")
         return
 
     done_stories = []
@@ -234,54 +239,48 @@ def run_jql(jql_query, project_name, regression_story=None):
     if regression_story:
         run_regression(regression_story, project_name)
 
-    report = f"📊 <b>تقرير {project_name}</b>\n"
-    report += f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-    report += f"━━━━━━━━━━━━━━━━\n\n"
+    report = f"📊 **تقرير {project_name}**\n"
+    report += f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
 
     if done_stories:
-        report += f"✅ <b>تم تحليلهم ({len(done_stories)})</b>\n"
+        report += f"✅ **تم تحليلهم ({len(done_stories)})**\n"
         for key, summary, link in done_stories:
-            report += f"• <a href='{link}'>{key}</a> - {summary}\n"
+            report += f"• [{key}]({link}) - {summary}\n"
         report += "\n"
 
     if updated_stories:
-        report += f"🔄 <b>تم إعادة تحليلهم ({len(updated_stories)})</b>\n"
+        report += f"🔄 **تم إعادة تحليلهم ({len(updated_stories)})**\n"
         for key, summary, link in updated_stories:
-            report += f"• <a href='{link}'>{key}</a> - {summary}\n"
+            report += f"• [{key}]({link}) - {summary}\n"
         report += "\n"
 
     if skipped_stories:
-        report += f"⏭ <b>تم تخطيهم ({len(skipped_stories)})</b>\n"
+        report += f"⏭ **تم تخطيهم ({len(skipped_stories)})**\n"
         for key, summary, link in skipped_stories:
-            report += f"• <a href='{link}'>{key}</a> - {summary}\n"
+            report += f"• [{key}]({link}) - {summary}\n"
         report += "\n"
 
     if failed_stories:
-        report += f"❌ <b>فشل تحليلهم ({len(failed_stories)})</b>\n"
+        report += f"❌ **فشل تحليلهم ({len(failed_stories)})**\n"
         for key, summary, link in failed_stories:
-            report += f"• <a href='{link}'>{key}</a> - {summary}\n"
+            report += f"• [{key}]({link}) - {summary}\n"
 
     if regression_story:
-        report += f"\n🔄 <b>Regression:</b> <a href='{JIRA_SERVER}browse/{regression_story}'>{regression_story}</a>\n"
+        report += f"\n🔄 **Regression:** [{regression_story}]({JIRA_SERVER}browse/{regression_story})\n"
 
-    report += f"\n━━━━━━━━━━━━━━━━\n"
-    report += f"📈 الإجمالي: {total} Stories"
+    report += f"\n📈 الإجمالي: {total} Stories"
 
-    send_telegram(report)
+    send_teams(report)
     print(f"\nDONE: {project_name}")
 
 # --- [Projects] ---
 PROJECTS = [
     {
-        "name": "Shine Laundries",
-        "jql": 'project = "Shine Laundries" AND Sprint = 10 AND type = Story',
-        "regression_story": None
+        "name": "Shine Laundries",  # ← غير الاسم
+        "jql": 'project = "Shine Laundries" AND Sprint = 10 AND type = Story',  # ← غير الـ JQL
+        "regression_story": None  # ← لو في Regression حط رقمها
     },
-    {
-        "name": "Project 2",
-        "jql": 'project = "Project 2" AND Sprint = 1 AND type = Story',
-        "regression_story": None
-    },
+    # ← ضيف Projects تانية هنا
 ]
 
 # --- [التشغيل] ---
