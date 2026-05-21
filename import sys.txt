@@ -1,0 +1,92 @@
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+from groq import Groq
+from jira import JIRA
+import requests
+import time
+
+# --- [بياناتك] ---
+JIRA_SERVER = "https://business-building.atlassian.net/"
+JIRA_EMAIL = "omar.osama@bb4it.org"
+JIRA_TOKEN = "ATATT3xFfGF0bTbFP-7MXspYdEs7ha1oxSH0R8lfwjz9vFA1GzJkLgdVHFDl_W-Ds14YppsVJ4l4mAX60h3-3lHV1hqwSihX8CuEQs9Ii_PRvUOsB8KNVRPwReW19EBs9eJpcSbvsXjZ_n9SYNyNroVcD4qv6wBC2CxUj74IyrU8zmvX1b18N2w=F95ECFCB"
+GROQ_API_KEY = "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"
+TELEGRAM_TOKEN = "8133342183:AAF0O5vRzzHuLZlETp1fTYAWzjUCu3GG8wo"
+MY_CHAT_ID = "952115290"
+
+# --- [إعدادات الربط] ---
+client = Groq(api_key=GROQ_API_KEY)
+jira = JIRA(server=JIRA_SERVER, basic_auth=(JIRA_EMAIL, JIRA_TOKEN))
+
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        response = requests.post(url, json={
+            "chat_id": MY_CHAT_ID,
+            "text": message
+        })
+        print(f"Telegram: {response.json().get('ok')}")
+    except Exception as e:
+        print(f"Telegram Error: {e}")
+
+def process_story(issue):
+    story_key = issue.key
+    summary = issue.fields.summary
+
+    try:
+        print(f"\nProcessing: {story_key} - {summary}")
+
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a Senior Software QC Specialist. Write professional Test Cases in Arabic with (Step / Expected Result) format."
+                },
+                {
+                    "role": "user",
+                    "content": f"Analyze this Story: {summary}"
+                }
+            ],
+            model="llama-3.1-8b-instant",
+        )
+
+        ai_test_cases = chat_completion.choices[0].message.content
+
+        jira.add_comment(story_key, f"AI Analysis (Groq):\n\n{ai_test_cases}")
+        print(f"Done: {story_key}")
+
+        send_telegram(f"✅ تم تحليل {story_key}\n📝 {summary}")
+
+        time.sleep(2)
+
+    except Exception as e:
+        print(f"FAILED {story_key}: {str(e)}")
+        send_telegram(f"❌ فشل تحليل {story_key}: {str(e)}")
+
+def run_jql(jql_query):
+    print(f"Running JQL: {jql_query}")
+
+    issues = jira.search_issues(jql_query, maxResults=50)
+    total = len(issues)
+    print(f"Found {total} Stories")
+
+    if total == 0:
+        print("No stories found!")
+        send_telegram("⚠️ مفيش Stories اتلاقت بالـ JQL ده!")
+        return
+
+    send_telegram(f"🚀 بدأ التحليل!\nعدد الـ Stories: {total}")
+
+    for i, issue in enumerate(issues, 1):
+        print(f"\n[{i}/{total}]")
+        process_story(issue)
+
+    send_telegram(f"🎉 خلص التحليل!\nتم تحليل {total} Stories بنجاح في جيرا.")
+    print("\nALL DONE!")
+
+# --- [الـ JQL بتاعك] ---
+JQL = 'project = "Narsian Beauty Center" AND Sprint = 9999 AND type = Story'
+
+run_jql(JQL)
